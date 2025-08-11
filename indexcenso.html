@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Censo de Alumbrado – Captura y Mapa (Claro + Verde)</title>
+  <title>Censo de Alumbrado – Captura y Mapa (Fix + Export Excel)</title>
   <style>
     :root{
       --bg:#f8f9fa;
@@ -33,6 +33,7 @@
     header .dot{width:10px;height:10px;border-radius:999px;background:var(--accent); box-shadow:0 0 10px var(--accent)}
     header h1{font-size:16px; margin:0; letter-spacing:.3px}
     header .sub{color:var(--muted); font-size:12px}
+
     .tabs{ display:flex; gap:8px; flex-wrap:wrap; }
     .tab-btn{
       appearance:none; border:1px solid var(--border); background:#fff; color:var(--text);
@@ -43,6 +44,7 @@
     .tab-btn.active{
       background:linear-gradient(180deg, #66bb6a, #43a047); border-color:#2e7d32; color:#fff;
     }
+
     .container{ max-width:1200px; margin:18px auto; padding:0 16px; display:grid; gap:16px; }
     .card{
       background:linear-gradient(180deg, var(--card), var(--soft)); border:1px solid var(--border);
@@ -74,8 +76,10 @@
     .btn-primary{
       background:linear-gradient(180deg, #66bb6a, #43a047); border-color:#2e7d32; color:#fff;
     }
+
     #map-captura{ width:100%; height:420px; }
     #map-vista{ width:100%; height:70vh; min-height:420px; }
+
     .statusbar{ display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
     .statusbar .led{width:8px; height:8px; border-radius:999px; background:#bdbdbd}
     .statusbar.ok .led{ background:var(--ok); box-shadow:0 0 8px var(--ok) }
@@ -89,10 +93,10 @@
     .muted{ color:var(--muted) }
     .small{ font-size:12px }
 
-    /* Popup (InfoWindow) contenido en modo claro */
+    /* Popups (InfoWindow) claros */
     .popup{
       min-width: 240px;
-      background:#ffffff; border:1px solid var(--border); border-radius:12px; padding:12px; color:var(--text);
+      background:#ffffff; border:1px solid var(--border); border-radius:12px; padding:12px; color:#202124;
       box-shadow: 0 10px 30px rgba(0,0,0,.12);
     }
     .popup .title{ font-weight:700; margin-bottom:6px; font-size:14px; color:#1b5e20 }
@@ -169,7 +173,7 @@
                 <option value="Directa" selected>Directa</option>
                 <option value="Encendida">Encendida</option>
                 <option value="Apagada">Apagada</option>
-                <option value="24hrs">24hrs</option>
+                <option value="Intermitente">Intermitente</option>
                 <option value="Fuera de servicio">Fuera de servicio</option>
               </select>
             </div>
@@ -222,20 +226,40 @@
       <div class="body">
         <div class="actions">
           <button id="btnFit" class="btn">🗺️ Centrar a todas</button>
+          <button id="btnExport" class="btn btn-primary">⬇️ Exportar Excel</button>
           <span id="statusLive" class="statusbar"><span class="led"></span><span>Escuchando cambios…</span></span>
         </div>
-        <div class="help">Cada marcador usa <code>icono.png</code>. Clic para ver su popup con datos.</div>
+        <div class="help">Exporta a .xlsx con todas las columnas del bucket, incluyendo el <strong>ID</strong> del registro.</div>
       </div>
     </section>
   </main>
 
   <div id="toast" class="toast"></div>
 
-  <!-- Firebase (v9 modular) -->
+  <!-- ====== STUB GLOBAL (evita error de callback si Maps se adelanta) ====== -->
+  <script>
+  (function(){
+    var called = false;
+    window.__gmaps_cb_buffer = [];
+    window.initMap = function(){
+      called = true;
+      window.__gmaps_cb_buffer.push(1);
+    };
+    window.__flushInitMap = function(real){
+      window.initMap = real;
+      if (called) { try { real(); } catch(e){ console.error(e); } }
+    };
+  })();
+  </script>
+
+  <!-- SheetJS (XLSX) para exportar a Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Firebase (v9 modular) + App -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
     import { getAnalytics } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-analytics.js";
-    import { getDatabase, ref, push, set, onValue } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+    import { getDatabase, ref, push, set, onValue, get, child } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
 
     // ====== Firebase config (tu proyecto) ======
     const firebaseConfig = {
@@ -277,7 +301,6 @@
         document.querySelectorAll(".tab").forEach(tab=>tab.style.display="none");
         const id = btn.dataset.tab;
         document.getElementById(id).style.display = "";
-        // Reparar tamaños de mapa al cambiar de pestaña
         if(id==="tab-mapa" && mapVista){ google.maps.event.trigger(mapVista, "resize"); fitAll(); }
         if(id==="tab-captura" && mapCaptura){ google.maps.event.trigger(mapCaptura, "resize"); }
       });
@@ -298,25 +321,25 @@
       { featureType: "water", elementType: "geometry.fill", stylers: [{ color: "#b2dfdb" }] },
       { featureType: "poi.park", elementType: "geometry.fill", stylers: [{ color: "#a5d6a7" }] },
       { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#388e3c" }] }
-    ];
+     ];
 
-    // ====== Timestamp en formato AM/PM ======
+    // ====== Timestamp AM/PM ======
     function nowTimestamp(){
       const d = new Date();
       const pad = (n,len=2)=>String(n).padStart(len,'0');
-      let hours = d.getHours();
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      hours = hours % 12; hours = hours ? hours : 12;
-      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(hours)}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${ampm}`;
+      let h = d.getHours();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12; h = h ? h : 12;
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(h)}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${ampm}`;
     }
     function refreshTimestamp(){ $("#timestamp").value = nowTimestamp(); }
     refreshTimestamp();
 
-    // ====== MAPA: Captura ======
+    // ====== MAPAS ======
     let mapCaptura, markerCaptura, mapVista, infoWindow, bounds, markersMap = new Map();
 
-    window.initMap = () => {
-      // Mapa de captura
+    function initMap(){
+      // Captura
       mapCaptura = new google.maps.Map(document.getElementById("map-captura"), {
         center: defaultPos, zoom: 17, disableDefaultUI:false, styles: lightGreenMapStyle
       });
@@ -327,6 +350,7 @@
       markerCaptura.addListener("dragend", () => {
         const p = markerCaptura.getPosition(); movePin(p.lat(), p.lng(), true);
       });
+
       $("#latitude").addEventListener("change", syncPinFromInputs);
       $("#longitude").addEventListener("change", syncPinFromInputs);
       $("#btnGPS").addEventListener("click", useDeviceGPS);
@@ -337,9 +361,12 @@
       });
       setStatus("#status", "Mapa listo. Ajusta el pin o usa GPS.", true);
 
-      // Mapa de vista en vivo
+      // Vista
       initVistaMap();
-    };
+    }
+
+    // Entregar la initMap real al stub global (si Maps ya llamó, la ejecuta)
+    window.__flushInitMap(initMap);
 
     function movePin(lat, lng, fromDrag=false){
       markerCaptura.setPosition({lat, lng});
@@ -364,58 +391,13 @@
       }, { enableHighAccuracy:true, timeout:10000, maximumAge:0 });
     }
 
-    // ====== FORM ======
-    const form = $("#lampForm");
-    form.addEventListener("submit", async (e)=>{
-      e.preventDefault();
-      const trabajador = $("#trabajador").value.trim();
-      if(!trabajador){ toast("El campo Trabajador es obligatorio", false); return; }
-      const latitude = parseFloat($("#latitude").value);
-      const longitude = parseFloat($("#longitude").value);
-      if(!Number.isFinite(latitude) || !Number.isFinite(longitude)){ toast("Lat/Lng inválidos", false); return; }
-
-      const data = {
-        trabajador,
-        medidor: $("#medidor").value.trim() || "",
-        capacidad: ($("#capacidad").value || "").trim() || "",
-        lampara: $("#lampara").value,
-        estatus: $("#estatus").value,
-        comentarios: $("#comentarios").value.trim() || "",
-        latitude, longitude,
-        timestamp: nowTimestamp()
-      };
-
-      try{
-        const nodeRef = ref(db, BUCKET_NAME);
-        const newRef = push(nodeRef);
-        await set(newRef, data);
-        refreshTimestamp();
-        toast("Registro guardado correctamente ✅");
-        setStatus("#status","Último guardado OK.", true);
-      }catch(err){
-        console.error(err);
-        toast("Error al guardar: " + err.message, false);
-        setStatus("#status","Error al guardar.", false, true);
-      }
-    });
-    $("#btnClear").addEventListener("click", ()=>{
-      form.reset();
-      $("#lampara").value="LED"; $("#estatus").value="Directa"; $("#comentarios").value="ok";
-      $("#latitude").value = defaultPos.lat; $("#longitude").value = defaultPos.lng;
-      refreshTimestamp(); movePin(defaultPos.lat, defaultPos.lng); mapCaptura.panTo(defaultPos);
-      toast("Formulario limpio");
-    });
-
-    // ====== MAPA: Vista en vivo con marcadores personalizados ======
+    // ====== MAPA: Vista en vivo ======
     function initVistaMap(){
       mapVista = new google.maps.Map(document.getElementById("map-vista"), {
         center: defaultPos, zoom: 15, disableDefaultUI:false, styles: lightGreenMapStyle
       });
       infoWindow = new google.maps.InfoWindow({ content: "" });
       bounds = new google.maps.LatLngBounds();
-
-      // Botón fitBounds
-      $("#btnFit").addEventListener("click", fitAll);
 
       // Escuchar cambios en tiempo real
       const nodeRef = ref(db, BUCKET_NAME);
@@ -427,7 +409,7 @@
           upsertMarker(key, item);
           seen.add(key);
         }
-        // Remove deleted
+        // Limpiar eliminados
         for(const key of Array.from(markersMap.keys())){
           if(!seen.has(key)){ markersMap.get(key).setMap(null); markersMap.delete(key); }
         }
@@ -437,7 +419,12 @@
         console.error(err);
         setStatus("#statusLive", "Error leyendo datos.", false, true);
       });
+
+      // Botones
+      $("#btnFit").addEventListener("click", fitAll);
+      $("#btnExport").addEventListener("click", exportExcel);
     }
+
     function validCoords(it){
       return it && Number.isFinite(parseFloat(it.latitude)) && Number.isFinite(parseFloat(it.longitude));
     }
@@ -490,9 +477,68 @@
       for(const m of markersMap.values()) bounds.extend(m.getPosition());
       mapVista.fitBounds(bounds);
     }
+
+    // ====== EXPORTAR EXCEL (.xlsx) ======
+    async function exportExcel(){
+      try{
+        setStatus("#statusLive", "Preparando Excel…", false);
+        const snap = await get(child(ref(db), BUCKET_NAME));
+        const data = snap.val();
+        if(!data){
+          toast("No hay datos para exportar.", false);
+          setStatus("#statusLive","Sin datos.", false, true);
+          return;
+        }
+
+        // Unir todas las llaves presentes como columnas
+        const allKeys = new Set(["id"]);
+        for(const [id, obj] of Object.entries(data)){
+          allKeys.add("id");
+          Object.keys(obj || {}).forEach(k => allKeys.add(k));
+        }
+        const headers = Array.from(allKeys);
+
+        // Construir filas
+        const rows = [];
+        for(const [id, obj] of Object.entries(data)){
+          const row = {};
+          headers.forEach(h => row[h] = h==="id" ? id : (obj?.[h] ?? ""));
+          rows.push(row);
+        }
+
+        // Crear libro y hoja
+        const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+        // Auto ancho simple
+        const colWidths = headers.map(h => {
+          const maxLen = Math.max(
+            String(h).length,
+            ...rows.map(r => String(r[h] ?? "").length)
+          );
+          return { wch: Math.min(Math.max(12, maxLen + 2), 60) };
+        });
+        ws['!cols'] = colWidths;
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Censo");
+
+        const fname = `CensoAlumbrado_${fileDate()}.xlsx`;
+        XLSX.writeFile(wb, fname);
+        setStatus("#statusLive", "Excel generado ✔️", true);
+        toast("Excel generado correctamente ✅");
+      }catch(err){
+        console.error(err);
+        setStatus("#statusLive", "Error al exportar.", false, true);
+        toast("Error al exportar: " + err.message, false);
+      }
+    }
+    function fileDate(){
+      const d = new Date();
+      const pad = (n)=>String(n).padStart(2,'0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
+    }
   </script>
 
-  <!-- Google Maps (carga al final) -->
+  <!-- Google Maps (con callback tradicional) -->
   <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCvhXkpjn3NIKaTnuL3X_W-IMty4urq2MA&callback=initMap"></script>
 </body>
 </html>
