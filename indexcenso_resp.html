@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Censo de Alumbrado – Captura y Mapa (Fix + Export Excel)</title>
+  <style>
+    :root{
+      --bg:#f8f9fa;
+      --card:#ffffff;
+      --muted:#5f6368;
+      --accent:#4caf50;      /* Verde principal */
+      --accent-2:#81c784;    /* Verde claro */
+      --danger:#d32f2f;
+      --ok:#388e3c;
+      --text:#202124;
+      --soft:#f1f3f4;
+      --border:#dcdcdc;
+      --radius:16px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      color:var(--text); background:linear-gradient(180deg,#ffffff, #f7faf7 45%, #f8f9fa);
+    }
+    header{
+      position:sticky; top:0; z-index:20; backdrop-filter: blur(8px);
+      background:rgba(255,255,255,.8); border-bottom:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 16px;
+    }
+    header .left{display:flex; align-items:center; gap:10px}
+    header .dot{width:10px;height:10px;border-radius:999px;background:var(--accent); box-shadow:0 0 10px var(--accent)}
+    header h1{font-size:16px; margin:0; letter-spacing:.3px}
+    header .sub{color:var(--muted); font-size:12px}
+
+    .tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+    .tab-btn{
+      appearance:none; border:1px solid var(--border); background:#fff; color:var(--text);
+      padding:8px 12px; border-radius:12px; cursor:pointer; font-weight:600; font-size:13px;
+      transition:background .2s,border .2s;
+    }
+    .tab-btn:hover{ background:#f6fff7; border-color:#cfead5 }
+    .tab-btn.active{
+      background:linear-gradient(180deg, #66bb6a, #43a047); border-color:#2e7d32; color:#fff;
+    }
+
+    .container{ max-width:1200px; margin:18px auto; padding:0 16px; display:grid; gap:16px; }
+    .card{
+      background:linear-gradient(180deg, var(--card), var(--soft)); border:1px solid var(--border);
+      border-radius:var(--radius); overflow:hidden; box-shadow: 0 10px 30px rgba(0,0,0,.08);
+    }
+    .card .head{ padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
+    .head .tag{font-size:12px; color:var(--muted)}
+    .body{ padding:16px; }
+    .row{ display:grid; gap:12px; grid-template-columns: 1fr; }
+    @media(min-width:680px){
+      .row.cols-2{ grid-template-columns: 1fr 1fr; }
+      .row.cols-3{ grid-template-columns: repeat(3,1fr); }
+    }
+    label{font-size:12px; color:var(--muted); display:block; margin:6px 0}
+    input, select, textarea{
+      width:100%; background:#fff; color:var(--text); border:1px solid var(--border);
+      outline:none; padding:12px 12px; border-radius:12px; transition:border .2s, box-shadow .2s; font-size:14px;
+    }
+    input:focus, select:focus, textarea:focus{ border-color:var(--accent); box-shadow:0 0 0 3px rgba(76,175,80,.15) }
+    textarea{min-height:92px; resize:vertical}
+    .actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+    .btn{
+      appearance:none; border:1px solid var(--border); background:#fff; color:var(--text);
+      padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:600; font-size:14px;
+      transition:transform .05s ease, background .2s, border .2s;
+    }
+    .btn:hover{ background:#f0fff2; border-color:#cfead5 }
+    .btn:active{ transform: translateY(1px) }
+    .btn-primary{
+      background:linear-gradient(180deg, #66bb6a, #43a047); border-color:#2e7d32; color:#fff;
+    }
+
+    #map-captura{ width:100%; height:420px; }
+    #map-vista{ width:100%; height:70vh; min-height:420px; }
+
+    .statusbar{ display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+    .statusbar .led{width:8px; height:8px; border-radius:999px; background:#bdbdbd}
+    .statusbar.ok .led{ background:var(--ok); box-shadow:0 0 8px var(--ok) }
+    .statusbar.warn .led{ background:var(--danger); box-shadow:0 0 8px var(--danger) }
+    .toast{
+      position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
+      background:#ffffff; border:1px solid var(--border); color:var(--text);
+      padding:12px 14px; border-radius:12px; display:none; z-index:1000; box-shadow:0 10px 30px rgba(0,0,0,.12)
+    }
+    .help{font-size:12px; color:var(--muted); margin-top:6px}
+    .muted{ color:var(--muted) }
+    .small{ font-size:12px }
+
+    /* Popups (InfoWindow) claros */
+    .popup{
+      min-width: 240px;
+      background:#ffffff; border:1px solid var(--border); border-radius:12px; padding:12px; color:#202124;
+      box-shadow: 0 10px 30px rgba(0,0,0,.12);
+    }
+    .popup .title{ font-weight:700; margin-bottom:6px; font-size:14px; color:#1b5e20 }
+    .popup .meta{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+    .chip{
+      background:#f0fff2; border:1px solid #cfead5; color:#2e7d32; padding:4px 8px; border-radius:999px; font-size:11px
+    }
+    .popup .kv{ display:grid; grid-template-columns: 110px 1fr; gap:6px; font-size:12px; margin-top:6px }
+    .popup .kv div:nth-child(odd){ color:#6a6f75 }
+    .popup .coords{ margin-top:8px; font-size:11px; color:#6a6f75 }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="left">
+      <span class="dot"></span>
+      <div>
+        <h1>Censo de Alumbrado • Tiempo Real</h1>
+        <div class="sub">Captura y visualiza lámparas con geolocalización precisa</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="tab-captura">Captura</button>
+      <button class="tab-btn" data-tab="tab-mapa">Mapa</button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <!-- ========== PESTAÑA: CAPTURA ========== -->
+    <section id="tab-captura" class="tab card">
+      <div class="head"><strong>Mapa</strong> <span class="tag">Ajusta el pin o usa GPS</span></div>
+      <div id="map-captura"></div>
+      <div class="body">
+        <div class="actions">
+          <button id="btnGPS" class="btn">📍 Tomar ubicación por GPS</button>
+          <button id="btnPin" class="btn">📌 Usar coordenadas del pin</button>
+          <span id="status" class="statusbar"><span class="led"></span><span>Esperando ubicación…</span></span>
+        </div>
+        <div class="help">• Arrastra el pin, toca el mapa o usa GPS. • Lat/Lng se sincronizan con el formulario.</div>
+      </div>
+
+      <div class="head"><strong>Formulario</strong> <span class="tag">Registro de lámpara</span></div>
+      <div class="body">
+        <form id="lampForm" autocomplete="off">
+          <div class="row cols-3">
+            <div>
+              <label for="trabajador">Trabajador</label>
+              <input id="trabajador" placeholder="Ej. Funcionario1" required>
+            </div>
+            <div>
+              <label for="medidor">Medidor</label>
+              <input id="medidor" type="text" maxlength="6" 
+       pattern="[A-Za-z0-9]{1,6}" 
+       title="Solo letras y números, máximo 6 caracteres" 
+       class="form-control" placeholder="Ejemplo: A123B">
+
+            </div>
+            <div>
+              <label for="capacidad">Capacidad (W)</label>
+              <input id="capacidad" placeholder="Ej. 50" inputmode="numeric" pattern="[0-9]*">
+            </div>
+          </div>
+
+          <div class="row cols-2">
+            <div>
+              <label for="lampara">Lámpara</label>
+              <select id="lampara">
+                <option value="LED" selected>LED</option>
+                <option value="Vapor de Sodio">Vapor de Sodio</option>
+                <option value="Vapor de Mercurio">Vapor de Mercurio</option>
+                <option value="Inducción">Inducción</option>
+                <option value="Otra">Otra</option>
+              </select>
+            </div>
+            <div>
+              <label for="estatus">Estatus</label>
+              <select id="estatus">
+                <option value="Directa" selected>Directa</option>
+                <option value="Encendida">Encendida</option>
+                <option value="Apagada">Apagada</option>
+                <option value="Intermitente">Intermitente</option>
+                <option value="Fuera de servicio">Fuera de servicio</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="comentarios">Comentarios</label>
+              <textarea id="comentarios" placeholder="Notas relevantes…">ok</textarea>
+            </div>
+          </div>
+
+          <div class="row cols-2">
+            <div>
+              <label for="latitude">Latitud</label>
+              <input id="latitude" value="25.69490051818059" required>
+            </div>
+            <div>
+              <label for="longitude">Longitud</label>
+              <input id="longitude" value="-100.33742842311409" required>
+            </div>
+          </div>
+
+          <div class="row cols-2">
+            <div>
+              <label for="timestamp">Timestamp</label>
+              <input id="timestamp" readonly>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <div class="chip">Se genera automáticamente al guardar (AM/PM)</div>
+            </div>
+          </div>
+
+          <div class="actions" style="margin-top:14px">
+            <button type="submit" class="btn btn-primary">💾 Guardar en Firebase</button>
+            <button type="button" id="btnClear" class="btn">🧹 Limpiar</button>
+          </div>
+        </form>
+        <div class="help muted small" style="margin-top:10px">
+          Los datos se guardan en <strong>CensoAlumbrado</strong> de tu Realtime Database.
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== PESTAÑA: MAPA ========== -->
+    <section id="tab-mapa" class="tab card" style="display:none">
+      <div class="head"><strong>Mapa</strong> <span class="tag">Lámparas censadas (tiempo real)</span></div>
+      <div id="map-vista"></div>
+      <div class="body">
+        <div class="actions">
+          <button id="btnFit" class="btn">🗺️ Centrar a todas</button>
+          <button id="btnExport" class="btn btn-primary">⬇️ Exportar Excel</button>
+          <span id="statusLive" class="statusbar"><span class="led"></span><span>Escuchando cambios…</span></span>
+        </div>
+        <div class="help">Exporta a .xlsx con todas las columnas del bucket, incluyendo el <strong>ID</strong> del registro.</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- ====== STUB GLOBAL (evita error de callback si Maps se adelanta) ====== -->
+  <script>
+  (function(){
+    var called = false;
+    window.__gmaps_cb_buffer = [];
+    window.initMap = function(){
+      called = true;
+      window.__gmaps_cb_buffer.push(1);
+    };
+    window.__flushInitMap = function(real){
+      window.initMap = real;
+      if (called) { try { real(); } catch(e){ console.error(e); } }
+    };
+  })();
+  </script>
+
+  <!-- SheetJS (XLSX) para exportar a Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Firebase (v9 modular) + App -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-analytics.js";
+    import { getDatabase, ref, push, set, onValue, get, child } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+
+    // ====== Firebase config (tu proyecto) ======
+    const firebaseConfig = {
+      apiKey: "AIzaSyCGuGpJEWo1_9gWwgSv3JO9s1051wDpY6E",
+      authDomain: "alumbradopubliconte.firebaseapp.com",
+      databaseURL: "https://alumbradopubliconte-default-rtdb.firebaseio.com",
+      projectId: "alumbradopubliconte",
+      storageBucket: "alumbradopubliconte.appspot.com",
+      messagingSenderId: "842157703635",
+      appId: "1:842157703635:web:64db480e6191f6c0326f26",
+      measurementId: "G-H4PG2MM8S5"
+    };
+    const app = initializeApp(firebaseConfig);
+    getAnalytics(app);
+    const db = getDatabase(app);
+
+    // ====== Helpers UI ======
+    const $ = (q)=>document.querySelector(q);
+    const toast = (msg, ok=true)=>{
+      const el = $("#toast");
+      el.textContent = msg;
+      el.style.display='block';
+      el.style.borderColor = ok ? "rgba(56,142,60,.25)" : "rgba(211,47,47,.25)";
+      setTimeout(()=> el.style.display='none', 2600);
+    };
+    const setStatus = (elId, text, ok=false, warn=false)=>{
+      const s = $(elId);
+      s.classList.remove("ok","warn");
+      if(ok) s.classList.add("ok");
+      if(warn) s.classList.add("warn");
+      s.querySelector("span:last-child").textContent = text;
+    };
+
+    // ====== Tabs ======
+    document.querySelectorAll(".tab-btn").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+        btn.classList.add("active");
+        document.querySelectorAll(".tab").forEach(tab=>tab.style.display="none");
+        const id = btn.dataset.tab;
+        document.getElementById(id).style.display = "";
+        if(id==="tab-mapa" && mapVista){ google.maps.event.trigger(mapVista, "resize"); fitAll(); }
+        if(id==="tab-captura" && mapCaptura){ google.maps.event.trigger(mapCaptura, "resize"); }
+      });
+    });
+
+    // ====== Config ======
+    const BUCKET_NAME = "CensoAlumbrado";
+    const defaultPos = { lat: 25.69490051818059, lng: -100.33742842311409 };
+
+    // ====== Estilo claro/verde para Google Maps ======
+    const lightGreenMapStyle = [
+      { elementType: "geometry", stylers: [{ color: "#e8f5e9" }] },
+      { elementType: "labels.text.fill", stylers: [{ color: "#2e7d32" }] },
+      { elementType: "labels.text.stroke", stylers: [{ color: "#ffffff" }] },
+      { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+      { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#c8e6c9" }] },
+      { featureType: "landscape.man_made", elementType: "geometry", stylers: [{ color: "#f1f8e9" }] },
+      { featureType: "water", elementType: "geometry.fill", stylers: [{ color: "#b2dfdb" }] },
+      { featureType: "poi.park", elementType: "geometry.fill", stylers: [{ color: "#a5d6a7" }] },
+      { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#388e3c" }] }
+     ];
+
+    // ====== Timestamp AM/PM ======
+    function nowTimestamp(){
+      const d = new Date();
+      const pad = (n,len=2)=>String(n).padStart(len,'0');
+      let h = d.getHours();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12; h = h ? h : 12;
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(h)}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${ampm}`;
+    }
+    function refreshTimestamp(){ $("#timestamp").value = nowTimestamp(); }
+    
+    // ====== FORM ======
+    const form = $("#lampForm");
+    const btnClear = $("#btnClear");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const trabajador = $("#trabajador").value.trim();
+      if (!trabajador) { toast("El campo Trabajador es obligatorio", false); return; }
+
+      const medidor = $("#medidor").value.trim();
+if (!/^[A-Za-z0-9]{1,6}$/.test(medidor)) {
+  toast("El campo Medidor debe ser alfanumérico (máx. 6 caracteres)", false);
+  return;
+}
+
+
+      // Tomar SIEMPRE la coordenada desde el marcador (fuente de verdad)
+      let latitude, longitude;
+      try {
+        const pos = markerCaptura && markerCaptura.getPosition ? markerCaptura.getPosition() : null;
+        if (pos) {
+          latitude = Number(pos.lat());
+          longitude = Number(pos.lng());
+          // reflejar en inputs
+          $("#latitude").value = latitude.toFixed(8);
+          $("#longitude").value = longitude.toFixed(8);
+        } else {
+          latitude = parseFloat($("#latitude").value);
+          longitude = parseFloat($("#longitude").value);
+        }
+      } catch (err) {
+        latitude = parseFloat($("#latitude").value);
+        longitude = parseFloat($("#longitude").value);
+      }
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        toast("Lat/Lng inválidos", false); return;
+      }
+
+      const data = {
+        trabajador,
+        medidor: medidor,
+        capacidad: ($("#capacidad").value || "").trim() || "",
+        lampara: $("#lampara").value,
+        estatus: $("#estatus").value,
+        comentarios: $("#comentarios").value.trim() || "",
+        latitude, longitude,
+        timestamp: nowTimestamp()
+      };
+
+      try {
+        const nodeRef = ref(db, BUCKET_NAME);
+        const newRef = push(nodeRef);
+        await set(newRef, data);
+        refreshTimestamp();
+        toast("Registro guardado correctamente ✅");
+        setStatus("#status","Último guardado OK.", true);
+      } catch (err) {
+        console.error("Firebase set error:", err);
+        toast("Error al guardar: " + (err && err.message ? err.message : err), false);
+        setStatus("#status","Error al guardar.", false, true);
+      }
+    });
+
+    if (btnClear) {
+      btnClear.addEventListener("click", () => {
+        form.reset();
+        $("#lampara").value = "LED";
+        $("#estatus").value = "Directa";
+        $("#comentarios").value = "ok";
+        const p = markerCaptura && markerCaptura.getPosition ? markerCaptura.getPosition() : null;
+        const lat = p ? p.lat() : defaultPos.lat;
+        const lng = p ? p.lng() : defaultPos.lng;
+        $("#latitude").value = lat;
+        $("#longitude").value = lng;
+        refreshTimestamp();
+        toast("Formulario limpio");
+      });
+    }
+
+
+    // ====== MAPAS ======
+    let mapCaptura, markerCaptura, mapVista, infoWindow, bounds, markersMap = new Map();
+
+    function initMap(){
+      // Captura
+      mapCaptura = new google.maps.Map(document.getElementById("map-captura"), {
+        center: defaultPos, zoom: 17, disableDefaultUI:false, styles: lightGreenMapStyle
+      });
+      markerCaptura = new google.maps.Marker({
+        position: defaultPos, map: mapCaptura, draggable:true, title:"Posición de la lámpara"
+      });
+      mapCaptura.addListener("click", (e)=> movePin(e.latLng.lat(), e.latLng.lng()));
+      markerCaptura.addListener("dragend", () => {
+        const p = markerCaptura.getPosition(); movePin(p.lat(), p.lng(), true);
+      });
+
+      $("#latitude").addEventListener("change", syncPinFromInputs);
+      $("#longitude").addEventListener("change", syncPinFromInputs);
+      $("#btnGPS").addEventListener("click", useDeviceGPS);
+      $("#btnPin").addEventListener("click", ()=>{
+        const p = markerCaptura.getPosition();
+        $("#latitude").value = p.lat().toFixed(8); $("#longitude").value = p.lng().toFixed(8);
+        setStatus("#status", "Coordenadas del pin aplicadas.", true);
+      });
+      setStatus("#status", "Mapa listo. Ajusta el pin o usa GPS.", true);
+
+      // Vista
+      initVistaMap();
+    }
+
+    // Entregar la initMap real al stub global (si Maps ya llamó, la ejecuta)
+    window.__flushInitMap(initMap);
+
+    function movePin(lat, lng, fromDrag=false){
+      markerCaptura.setPosition({lat, lng});
+      if(!fromDrag){ $("#latitude").value = lat.toFixed(8); $("#longitude").value = lng.toFixed(8); }
+    }
+    function syncPinFromInputs(){
+      const lat = parseFloat($("#latitude").value); const lng = parseFloat($("#longitude").value);
+      if(Number.isFinite(lat) && Number.isFinite(lng)){
+        movePin(lat,lng,true); mapCaptura.panTo({lat,lng});
+      } else { toast("Lat/Lng inválidos", false); }
+    }
+    function useDeviceGPS(){
+      if(!navigator.geolocation){ toast("Geolocalización no soportada", false); return; }
+      setStatus("#status","Obteniendo ubicación del dispositivo…");
+      navigator.geolocation.getCurrentPosition(pos=>{
+        const { latitude, longitude } = pos.coords;
+        movePin(latitude, longitude); mapCaptura.panTo({lat:latitude, lng:longitude});
+        setStatus("#status","Ubicación obtenida por GPS.", true);
+      }, err=>{
+        setStatus("#status","No se pudo obtener GPS", false, true);
+        toast("Error de GPS: " + err.message, false);
+      }, { enableHighAccuracy:true, timeout:10000, maximumAge:0 });
+    }
+
+    // ====== MAPA: Vista en vivo ======
+    function initVistaMap(){
+      mapVista = new google.maps.Map(document.getElementById("map-vista"), {
+        center: defaultPos, zoom: 15, disableDefaultUI:false, styles: lightGreenMapStyle
+      });
+      infoWindow = new google.maps.InfoWindow({ content: "" });
+      bounds = new google.maps.LatLngBounds();
+
+      // Escuchar cambios en tiempo real
+      const nodeRef = ref(db, BUCKET_NAME);
+      onValue(nodeRef, (snap)=>{
+        const data = snap.val() || {};
+        const seen = new Set();
+        for(const [key, item] of Object.entries(data)){
+          if(!validCoords(item)) continue;
+          upsertMarker(key, item);
+          seen.add(key);
+        }
+        // Limpiar eliminados
+        for(const key of Array.from(markersMap.keys())){
+          if(!seen.has(key)){ markersMap.get(key).setMap(null); markersMap.delete(key); }
+        }
+        setStatus("#statusLive", `Marcadores activos: ${markersMap.size}`, true);
+        fitAll();
+      }, (err)=>{
+        console.error(err);
+        setStatus("#statusLive", "Error leyendo datos.", false, true);
+      });
+
+      // Botones
+      $("#btnFit").addEventListener("click", fitAll);
+      $("#btnExport").addEventListener("click", exportExcel);
+    }
+
+    function validCoords(it){
+      return it && Number.isFinite(parseFloat(it.latitude)) && Number.isFinite(parseFloat(it.longitude));
+    }
+    function markerIcon(){
+      return {
+        url: "icono.png",
+        scaledSize: new google.maps.Size(34,34),
+        anchor: new google.maps.Point(17,34)
+      };
+    }
+    function upsertMarker(key, item){
+      const pos = { lat: parseFloat(item.latitude), lng: parseFloat(item.longitude) };
+      if(markersMap.has(key)){
+        const m = markersMap.get(key);
+        m.setPosition(pos);
+        m.__item = item;
+      }else{
+        const m = new google.maps.Marker({ position: pos, map: mapVista, icon: markerIcon(), title: item.lampara || "Lámpara" });
+        m.__item = item;
+        m.addListener("click", ()=> openPopup(m));
+        markersMap.set(key, m);
+      }
+    }
+    function openPopup(marker){
+      const it = marker.__item || {};
+      const html = `
+        <div class="popup">
+          <div class="title">Lámpara ${escapeHTML(it.lampara||'')}</div>
+          <div class="meta">
+            <span class="chip">Estatus: ${escapeHTML(it.estatus||'')}</span>
+            ${it.capacidad?`<span class="chip">${escapeHTML(it.capacidad)} W</span>`:''}
+            ${it.medidor?`<span class="chip">Medidor: ${escapeHTML(it.medidor)}</span>`:''}
+          </div>
+          <div class="kv">
+            <div>Trabajador</div><div>${escapeHTML(it.trabajador||'')}</div>
+            <div>Comentarios</div><div>${escapeHTML(it.comentarios||'')}</div>
+            <div>Timestamp</div><div>${escapeHTML(it.timestamp||'')}</div>
+          </div>
+          <div class="coords">📍 ${Number(it.latitude).toFixed(6)}, ${Number(it.longitude).toFixed(6)}</div>
+        </div>`;
+      infoWindow.setContent(html);
+      infoWindow.open({ anchor: marker, map: mapVista, shouldFocus:false });
+    }
+    function escapeHTML(s){
+      return String(s||"").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+    }
+    function fitAll(){
+      if(markersMap.size===0){ mapVista.setCenter(defaultPos); mapVista.setZoom(14); return; }
+      bounds = new google.maps.LatLngBounds();
+      for(const m of markersMap.values()) bounds.extend(m.getPosition());
+      mapVista.fitBounds(bounds);
+    }
+
+    // ====== EXPORTAR EXCEL (.xlsx) ======
+    async function exportExcel(){
+      try{
+        setStatus("#statusLive", "Preparando Excel…", false);
+        const snap = await get(child(ref(db), BUCKET_NAME));
+        const data = snap.val();
+        if(!data){
+          toast("No hay datos para exportar.", false);
+          setStatus("#statusLive","Sin datos.", false, true);
+          return;
+        }
+
+        // Unir todas las llaves presentes como columnas
+        const allKeys = new Set(["id"]);
+        for(const [id, obj] of Object.entries(data)){
+          allKeys.add("id");
+          Object.keys(obj || {}).forEach(k => allKeys.add(k));
+        }
+        const headers = Array.from(allKeys);
+
+        // Construir filas
+        const rows = [];
+        for(const [id, obj] of Object.entries(data)){
+          const row = {};
+          headers.forEach(h => row[h] = h==="id" ? id : (obj?.[h] ?? ""));
+          rows.push(row);
+        }
+
+        // Crear libro y hoja
+        const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+        // Auto ancho simple
+        const colWidths = headers.map(h => {
+          const maxLen = Math.max(
+            String(h).length,
+            ...rows.map(r => String(r[h] ?? "").length)
+          );
+          return { wch: Math.min(Math.max(12, maxLen + 2), 60) };
+        });
+        ws['!cols'] = colWidths;
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Censo");
+
+        const fname = `CensoAlumbrado_${fileDate()}.xlsx`;
+        XLSX.writeFile(wb, fname);
+        setStatus("#statusLive", "Excel generado ✔️", true);
+        toast("Excel generado correctamente ✅");
+      }catch(err){
+        console.error(err);
+        setStatus("#statusLive", "Error al exportar.", false, true);
+        toast("Error al exportar: " + err.message, false);
+      }
+    }
+    function fileDate(){
+      const d = new Date();
+      const pad = (n)=>String(n).padStart(2,'0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
+    }
+  </script>
+
+  <!-- Google Maps (con callback tradicional) -->
+  <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCvhXkpjn3NIKaTnuL3X_W-IMty4urq2MA&callback=initMap"></script>
+</body>
+</html>
